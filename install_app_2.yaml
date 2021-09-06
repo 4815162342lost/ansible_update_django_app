@@ -1,0 +1,127 @@
+---
+-  hosts: app, backup
+   any_errors_fatal: true
+   gather_facts: no
+   vars_files:
+     - "{{ inventory_dir }}/{{ inventory_hostname }}_environment.yaml"
+   tasks:
+    - name: "Create dir in /tmp/ for download installation package"
+      file:
+        path: /tmp/web_bb_upgrade/
+        state: directory
+      delegate_to: 127.0.0.1
+      run_once: yes
+   
+    - name: "Download web_bb packages and requiments to local machine"
+      get_url:
+        dest: /tmp/web_bb_upgrade/
+        force_basic_auth: yes
+        url: "{{ item }}"
+        url_password: secret_password 
+        url_username: bars
+      with_items:
+        - "http://salt.secret_site.ru/web_bb_builds/web-bb-{{ version }}.tar.gz"
+        - "http://salt.secret_site.ru/web_bb_builds/web-bb-{{ version }}-requirements.tar.gz"
+      delegate_to: 127.0.0.1
+      run_once: yes
+
+    - block:
+      - name: "Stop web_bb application"
+        community.general.supervisorctl:
+          name: "{{ supervisord_group }}"
+          state: stopped
+        when: inventory_hostname in groups['app']
+
+      - name: "Create database dump"
+        shell:
+          cmd: "{{ pg_dump_command }} -f {{dump_location}}{{ dump_name }}"
+        when:
+          - inventory_hostname in groups['backup']
+          - (make_dump | default(False) | bool)
+        environment:
+          PGPASSWORD: "{{ database_password }}" 
+        async: 7200
+        poll: 180      
+      become: yes
+      become_user: root
+
+    - block:
+      - name: "Copy web_bb packages and requiments package to target server"
+        copy:
+          src: "{{ item }}"
+          dest: /tmp/
+        with_items:
+          - "/tmp/web_bb_upgrade/web-bb-{{ version }}.tar.gz"
+          - "/tmp/web_bb_upgrade/web-bb-{{ version }}-requirements.tar.gz"
+
+      - name: "Create dir for Unpack"
+        file:
+          state: directory
+          path:  "/tmp/web-bb-{{ version }}/"
+
+      - name: "Unpack tar.gz with web_bb"
+        unarchive:
+          remote_src: yes
+          dest: "/tmp/web-bb-{{ version }}/"
+          src: "{{ item }}"
+        loop:
+           - "/tmp/web-bb-{{ version }}-requirements.tar.gz"
+           - "/tmp/web-bb-{{ version }}.tar.gz"
+
+      - name: "Install web_bb application"
+        pip:
+          extra_args: "--no-index --find-link=/tmp/web-bb-{{ version }}/"
+          virtualenv: "{{ venv }}"
+          name:  "/tmp/web-bb-{{ version }}/web_bb_app-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+
+      - name: "Make manage.py executiable"
+        file:
+          path: "{{ manage_py_location }}manage.py"
+          mode: 0755
+
+      - name: "Make migrate command on db"
+        community.general.django_manage:
+          command: migrate
+          project_path: "{{ manage_py_location }}"
+          virtualenv: "{{ venv }}"
+          settings: web_bb_app.settings
+        when: inventory_hostname in groups['app'][0]
+
+      - name: "Make collectstatic command"
+        community.general.django_manage:
+          command: collectstatic
+          project_path: "{{ manage_py_location }}"
+          virtualenv: "{{ venv }}"
+          settings: web_bb_app.settings
+        throttle: 1
+
+      - name: "Delete web_bb packages and temporary dirs from server"
+        file:
+          path: "{{ item }}"
+          state: absent
+        with_items:
+        - "/tmp/web-bb-{{ version }}.tar.gz"
+        - "/tmp/web-bb-{{ version }}-requirements.tar.gz"
+        - "/tmp/web-bb-{{ version }}"
+
+      environment: "{{ env_vars }}"
+      become: yes
+      become_user: "{{ application_user }}"
+
+    - name: "Start web_bb application"
+      community.general.supervisorctl:
+        name: "{{ supervisord_group }}"
+        state: started
+      when: inventory_hostname in groups['app']
+      become: yes
+      become_user: root
+
+    - name: "Delete web_bb packages from local machine"
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/tmp/web_bb_upgrade/web-bb-{{ version }}.tar.gz"
+        - "/tmp/web_bb_upgrade/web-bb-{{ version }}-requirements.tar.gz"
+      delegate_to: 127.0.0.1
+      run_once: yes
