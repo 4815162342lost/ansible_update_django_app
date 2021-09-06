@@ -14,4 +14,4 @@ This is simple playbook for upgrade django_application in virtual python env. St
 10) Remove python-package from server
 
 Run example:
-ansible-playbook -i ./tat_prod/inventory -e "version=21.08.1.1 make_dump=True" ./install_app.yaml
+```ansible-playbook -i ./tat_prod/inventory -e "version=21.08.1.1 make_dump=True" ./install_app.yaml```
