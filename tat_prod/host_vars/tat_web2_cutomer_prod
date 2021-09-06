@@ -1,0 +1,3 @@
+venv: /home/venv/paidserv-rt2/
+manage_py_location: /home/venv/paidserv-rt2/lib/python2.7/site-packages/paidserv/
+supervisord_group: "paidserv_prod_web2:"

@@ -1,0 +1,10 @@
+[app]
+tat_web1_cutomer_prod ansible_host=192.168.0.3 ansible_password=XXX ansible_port=22 ansible_become_password=XXX
+tat_web2_cutomer_prod ansible_host=192.168.0.4 ansible_password=XXX ansible_port=9999 ansible_become_password=XXX
+
+[backup]
+tat_web1_cutomer_prod ansible_host=192.168.0.3 ansible_password=XXX ansible_port=22 ansible_become_password=XXX
+
+[app:vars]
+ansible_ssh_user=bars
+ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -q bars@192.168.0.5"'

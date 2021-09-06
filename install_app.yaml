@@ -1,0 +1,103 @@
+---
+-  hosts: app, backup
+   any_errors_fatal: true
+   gather_facts: no
+   vars_files:
+     - "{{ inventory_dir }}/env_files/{{ inventory_hostname }}_environment.yaml"
+
+   tasks:
+    - name: "Download paidserv packages to local machine"
+      get_url:
+        dest: /tmp/
+        force_basic_auth: yes
+        url: "http://secret_site.ru/paidserv-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+        url_password: sensitive_passwors 
+        url_username: bars
+      delegate_to: 127.0.0.1
+      run_once: yes
+
+    - block:
+      - name: "Stop paidserv application"
+        community.general.supervisorctl:
+          name: "{{ supervisord_group }}"
+          state: stopped
+        when: inventory_hostname in groups['app']
+
+      - name: "Create database dump"
+        shell:
+          cmd: "{{ pg_dump_command }} -f {{dump_location}}{{ dump_name }}"
+        when:
+          - inventory_hostname in groups['backup']
+          - (make_dump | default(False) | bool)
+        environment:
+          PGPASSWORD: "{{ database_password }}" 
+        async: 7200
+        poll: 180
+      become: yes
+      become_user: root
+
+    - block:
+      - name: "Copy paidserv package to target server"
+        copy:
+          src: "/tmp/paidserv-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+          dest: /tmp/
+
+      - name: "Install paidserv application"
+        pip:
+          extra_args: "--extra-index-url=http://pypi.secret_site.ru/simple --trusted-host=pypi.secret_site.ru"
+          virtualenv: "{{ venv }}"
+          name:  "/tmp/paidserv-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+
+      - name: "Make manage.py executiable"
+        file:
+          path: "{{ manage_py_location }}manage.py"
+          mode: 0755
+
+      - name: "Make syncdb command on db"
+        community.general.django_manage:
+          command: syncdb
+          project_path: "{{ manage_py_location }}"
+          virtualenv: "{{ venv }}"
+          settings: paidserv.settings
+        when: inventory_hostname in groups['app'][0]
+
+      - name: "Make migrate command on db"
+        community.general.django_manage:
+          command: migrate
+          project_path: "{{ manage_py_location }}"
+          virtualenv: "{{ venv }}"
+          settings: paidserv.settings
+        when: inventory_hostname in groups['app'][0]
+
+      - name: "Make collectstatic command"
+        community.general.django_manage:
+          command: collectstatic
+          project_path: "{{ manage_py_location }}"
+          virtualenv: "{{ venv }}"
+          settings: paidserv.settings
+        throttle: 1
+          
+      - name: "Delete paidserv packages from server"
+        file:
+          path: "/tmp/paidserv-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+          state: absent
+      environment: "{{ env_vars }}"
+
+      become: yes
+      become_user: "{{ application_user }}"
+      when: inventory_hostname in groups['app']
+
+    - name: "Start paidserv application"
+      community.general.supervisorctl:
+        name: "{{ supervisord_group }}"
+        state: started
+      become: yes
+      become_user: root
+      when: inventory_hostname in groups['app']      
+
+    - name: "Delete paidserv packages from local machine"
+      file:
+        path: "/tmp/paidserv-{{ version | regex_replace('\\.0', '.') }}.tar.gz"
+        state: absent
+      delegate_to: 127.0.0.1
+      run_once: yes
