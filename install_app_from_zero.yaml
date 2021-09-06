@@ -1,3 +1,8 @@
+# versions.yaml example:
+# postgresql_version: 11
+# python_version: 3.6.5
+# web_bb_version: 2020.55
+# pip_version: 20.0.2
 ---
 -  hosts: all
    vars_files:
